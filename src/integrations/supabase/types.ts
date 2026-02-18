@@ -47,6 +47,226 @@ export type Database = {
         }
         Relationships: []
       }
+      api_tokens: {
+        Row: {
+          created_at: string
+          created_by_user_id: string | null
+          expires_at: string | null
+          id: string
+          ip_allowlist: string[] | null
+          last_used_at: string | null
+          name: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          role_id: string | null
+          scopes: string[] | null
+          status: string
+          token_hash: string
+          token_preview: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          id?: string
+          ip_allowlist?: string[] | null
+          last_used_at?: string | null
+          name: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          role_id?: string | null
+          scopes?: string[] | null
+          status?: string
+          token_hash: string
+          token_preview: string
+        }
+        Update: {
+          created_at?: string
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          id?: string
+          ip_allowlist?: string[] | null
+          last_used_at?: string | null
+          name?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          role_id?: string | null
+          scopes?: string[] | null
+          status?: string
+          token_hash?: string
+          token_preview?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "api_tokens_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      app_users: {
+        Row: {
+          created_at: string
+          email: string
+          failed_login_attempts: number
+          id: string
+          last_login_at: string | null
+          locked_until: string | null
+          must_change_password: boolean
+          name: string
+          notes: string | null
+          phone: string | null
+          role_id: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          failed_login_attempts?: number
+          id?: string
+          last_login_at?: string | null
+          locked_until?: string | null
+          must_change_password?: boolean
+          name: string
+          notes?: string | null
+          phone?: string | null
+          role_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          failed_login_attempts?: number
+          id?: string
+          last_login_at?: string | null
+          locked_until?: string | null
+          must_change_password?: boolean
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          role_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_users_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_logs: {
+        Row: {
+          action: string
+          actor_id: string
+          actor_type: string
+          after_data: Json | null
+          before_data: Json | null
+          created_at: string
+          id: string
+          ip: string | null
+          justification: string | null
+          metadata: Json | null
+          resource_id: string | null
+          resource_type: string
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          actor_id: string
+          actor_type: string
+          after_data?: Json | null
+          before_data?: Json | null
+          created_at?: string
+          id?: string
+          ip?: string | null
+          justification?: string | null
+          metadata?: Json | null
+          resource_id?: string | null
+          resource_type: string
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string
+          actor_type?: string
+          after_data?: Json | null
+          before_data?: Json | null
+          created_at?: string
+          id?: string
+          ip?: string | null
+          justification?: string | null
+          metadata?: Json | null
+          resource_id?: string | null
+          resource_type?: string
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
+      conversation_context: {
+        Row: {
+          abandoned_cart: Json | null
+          created_at: string
+          id: string
+          last_intent: string | null
+          last_interaction_at: string
+          open_order_id: string | null
+          open_subscription_id: string | null
+          phone: string
+          updated_at: string
+        }
+        Insert: {
+          abandoned_cart?: Json | null
+          created_at?: string
+          id?: string
+          last_intent?: string | null
+          last_interaction_at?: string
+          open_order_id?: string | null
+          open_subscription_id?: string | null
+          phone: string
+          updated_at?: string
+        }
+        Update: {
+          abandoned_cart?: Json | null
+          created_at?: string
+          id?: string
+          last_intent?: string | null
+          last_interaction_at?: string
+          open_order_id?: string | null
+          open_subscription_id?: string | null
+          phone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_context_open_order_id_fkey"
+            columns: ["open_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_context_open_subscription_id_fkey"
+            columns: ["open_subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           bank_account: string | null
@@ -408,6 +628,27 @@ export type Database = {
           },
         ]
       }
+      permissions: {
+        Row: {
+          action: string
+          description: string | null
+          id: string
+          resource: string
+        }
+        Insert: {
+          action: string
+          description?: string | null
+          id?: string
+          resource: string
+        }
+        Update: {
+          action?: string
+          description?: string | null
+          id?: string
+          resource?: string
+        }
+        Relationships: []
+      }
       products: {
         Row: {
           active: boolean
@@ -455,6 +696,66 @@ export type Database = {
           stock?: number
           stock_max?: number
           stock_min?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      role_permissions: {
+        Row: {
+          id: string
+          permission_id: string
+          role_id: string
+        }
+        Insert: {
+          id?: string
+          permission_id: string
+          role_id: string
+        }
+        Update: {
+          id?: string
+          permission_id?: string
+          role_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_permissions_permission_id_fkey"
+            columns: ["permission_id"]
+            isOneToOne: false
+            referencedRelation: "permissions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "role_permissions_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      roles: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_system: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_system?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_system?: boolean
+          name?: string
           updated_at?: string
         }
         Relationships: []
@@ -649,6 +950,36 @@ export type Database = {
           },
         ]
       }
+      system_audit_logs: {
+        Row: {
+          created_at: string
+          entity_id: string | null
+          entity_type: string
+          event_type: string
+          id: string
+          payload_json: Json | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type: string
+          event_type: string
+          id?: string
+          payload_json?: Json | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string
+          event_type?: string
+          id?: string
+          payload_json?: Json | null
+          status?: string
+        }
+        Relationships: []
+      }
       system_settings: {
         Row: {
           created_at: string | null
@@ -676,6 +1007,42 @@ export type Database = {
         }
         Relationships: []
       }
+      user_permission_overrides: {
+        Row: {
+          effect: string
+          id: string
+          permission_id: string
+          user_id: string
+        }
+        Insert: {
+          effect: string
+          id?: string
+          permission_id: string
+          user_id: string
+        }
+        Update: {
+          effect?: string
+          id?: string
+          permission_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_permission_overrides_permission_id_fkey"
+            columns: ["permission_id"]
+            isOneToOne: false
+            referencedRelation: "permissions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_permission_overrides_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -697,6 +1064,27 @@ export type Database = {
         }
         Relationships: []
       }
+      webhook_events: {
+        Row: {
+          event_id: string
+          id: string
+          processed_at: string
+          provider: string
+        }
+        Insert: {
+          event_id: string
+          id?: string
+          processed_at?: string
+          provider: string
+        }
+        Update: {
+          event_id?: string
+          id?: string
+          processed_at?: string
+          provider?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -710,6 +1098,10 @@ export type Database = {
         Returns: boolean
       }
       is_admin: { Args: never; Returns: boolean }
+      user_has_permission: {
+        Args: { _action: string; _resource: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

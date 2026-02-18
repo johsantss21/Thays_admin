@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Settings,
   LogOut,
+  ShieldCheck,
   Menu,
   X
 } from 'lucide-react';
@@ -26,6 +27,7 @@ const menuItems = [
   { path: '/clientes', label: 'Clientes', icon: Users },
   { path: '/pedidos', label: 'Pedidos', icon: ShoppingCart },
   { path: '/assinaturas', label: 'Assinaturas', icon: RefreshCw },
+  { path: '/usuarios', label: 'Usuários & Permissões', icon: ShieldCheck },
   { path: '/configuracoes', label: 'Configurações', icon: Settings },
 ];
 
@@ -123,7 +125,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
         )}
 
         {/* Main Content */}
-        <main className="flex-1 p-6 lg:p-8 min-h-screen">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 min-h-screen pb-20 lg:pb-8">
           {children}
         </main>
       </div>

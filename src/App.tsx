@@ -14,6 +14,7 @@ import Customers from "./pages/Customers";
 import Orders from "./pages/Orders";
 import Subscriptions from "./pages/Subscriptions";
 import Settings from "./pages/Settings";
+import UsersPermissions from "./pages/UsersPermissions";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -120,6 +121,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Settings />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/usuarios"
+        element={
+          <ProtectedRoute>
+            <UsersPermissions />
           </ProtectedRoute>
         }
       />

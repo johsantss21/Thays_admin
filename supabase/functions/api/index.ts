@@ -126,6 +126,12 @@ serve(async (req) => {
         return handleSettings(req, url);
       case "deliveries":
         return handleDeliveries(req, url);
+      case "financial-summary":
+        return handleFinancialSummary(req, url);
+      case "conversation-context":
+        return handleConversationContext(req, url);
+      case "audit-logs":
+        return handleAuditLogs(req, url);
       default:
         return new Response(
           JSON.stringify({ 
@@ -138,6 +144,9 @@ serve(async (req) => {
               "/api/subscriptions",
               "/api/settings",
               "/api/deliveries",
+              "/api/financial-summary?start=YYYY-MM-DD&end=YYYY-MM-DD",
+              "/api/conversation-context?phone=55...",
+              "/api/audit-logs?entity_type=order&status=error",
               "/api/mcp/health",
               "/api/mcp/tools",
               "/api/mcp/call",
@@ -980,7 +989,7 @@ async function handleMcp(req: Request, route: string, subRoute: string) {
     if (!allowlist.includes(tool)) {
       await supabase.from("mcp_audit_logs").insert({
         env: "prod", actor: "n8n", tool, trace_id: traceId, request: body, response: null, ok: false, error_message: "Tool não permitida na allowlist", ip,
-      }).catch(() => {});
+      });
       return new Response(
         JSON.stringify({ ok: false, error: `Tool '${tool}' não está na allowlist` }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -991,7 +1000,7 @@ async function handleMcp(req: Request, route: string, subRoute: string) {
       const result = await executeMcpTool(tool, args);
       await supabase.from("mcp_audit_logs").insert({
         env: "prod", actor: "n8n", tool, trace_id: traceId, request: body, response: result, ok: true, error_message: null, ip,
-      }).catch(() => {});
+      });
       return new Response(
         JSON.stringify({ ok: true, trace_id: traceId, result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -999,7 +1008,7 @@ async function handleMcp(req: Request, route: string, subRoute: string) {
     } catch (err: any) {
       await supabase.from("mcp_audit_logs").insert({
         env: "prod", actor: "n8n", tool, trace_id: traceId, request: body, response: null, ok: false, error_message: err.message, ip,
-      }).catch(() => {});
+      });
       return new Response(
         JSON.stringify({ ok: false, trace_id: traceId, error: err.message }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1015,7 +1024,7 @@ async function handleMcp(req: Request, route: string, subRoute: string) {
 
     await supabase.from("mcp_audit_logs").insert({
       env: "prod", actor: "n8n", tool: `event:${type || "unknown"}`, trace_id: traceId, request: body, response: { received: true }, ok: true, error_message: null, ip,
-    }).catch(() => {});
+    });
 
     return new Response(
       JSON.stringify({ ok: true, trace_id: traceId }),
@@ -1169,3 +1178,141 @@ async function executeMcpTool(toolName: string, args: any): Promise<any> {
       throw new Error(`Tool desconhecida: ${toolName}`);
   }
 }
+
+// ============================================
+// FINANCIAL SUMMARY HANDLER
+// GET /api/financial-summary?start=YYYY-MM-DD&end=YYYY-MM-DD
+// ============================================
+async function handleFinancialSummary(req: Request, url: URL) {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const start = url.searchParams.get("start") || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+  const end = url.searchParams.get("end") || new Date().toISOString().split('T')[0];
+
+  const [ordersRes, subsRes] = await Promise.all([
+    supabase.from("orders").select("id, total_amount, payment_status, delivery_status, created_at")
+      .gte("created_at", `${start}T00:00:00`)
+      .lte("created_at", `${end}T23:59:59`),
+    supabase.from("subscriptions").select("id, total_amount, status, frequency, is_emergency, created_at"),
+  ]);
+
+  const orders = ordersRes.data || [];
+  const allSubs = subsRes.data || [];
+
+  const confirmedOrders = orders.filter((o: any) => o.payment_status === 'confirmado');
+  const canceledOrders = orders.filter((o: any) => o.payment_status === 'cancelado');
+  const activeSubs = allSubs.filter((s: any) => s.status === 'ativa');
+  const pausedSubs = allSubs.filter((s: any) => s.status === 'pausada');
+  const canceledSubs = allSubs.filter((s: any) => s.status === 'cancelada');
+  const emergencySubs = activeSubs.filter((s: any) => s.is_emergency);
+
+  const totalOrderRevenue = confirmedOrders.reduce((sum: number, o: any) => sum + Number(o.total_amount), 0);
+  const totalSubRevenue = activeSubs.reduce((sum: number, s: any) => sum + Number(s.total_amount), 0);
+
+  const recurringProjection = activeSubs.reduce((sum: number, s: any) => {
+    const freqMultiplier: Record<string, number> = { diaria: 20, semanal: 4, quinzenal: 2, mensal: 1 };
+    const multiplier = freqMultiplier[s.frequency] || 4;
+    return sum + (Number(s.total_amount) * multiplier);
+  }, 0);
+
+  const churnRate = allSubs.length > 0
+    ? Math.round((canceledSubs.length / allSubs.length) * 10000) / 100
+    : 0;
+
+  return new Response(JSON.stringify({
+    success: true,
+    period: { start, end },
+    data: {
+      total_orders: orders.length,
+      confirmed_orders: confirmedOrders.length,
+      canceled_orders: canceledOrders.length,
+      total_order_revenue: Math.round(totalOrderRevenue * 100) / 100,
+      total_subscriptions: allSubs.length,
+      active_subscriptions: activeSubs.length,
+      paused_subscriptions: pausedSubs.length,
+      canceled_subscriptions: canceledSubs.length,
+      total_emergency: emergencySubs.length,
+      churn_rate: churnRate,
+      recurring_projection: Math.round(recurringProjection * 100) / 100,
+      total_revenue: Math.round((totalOrderRevenue + totalSubRevenue) * 100) / 100,
+    }
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ============================================
+// CONVERSATION CONTEXT HANDLER (memória n8n)
+// GET /api/conversation-context?phone=55...
+// POST /api/conversation-context (body: { phone, last_intent, ... })
+// ============================================
+async function handleConversationContext(req: Request, url: URL) {
+  const phone = url.searchParams.get("phone");
+
+  switch (req.method) {
+    case "GET": {
+      if (!phone) {
+        return new Response(JSON.stringify({ error: "Parâmetro 'phone' é obrigatório" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const { data, error } = await supabase
+        .from("conversation_context")
+        .select("*")
+        .eq("phone", phone.replace(/\D/g, ""))
+        .maybeSingle();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    case "POST": {
+      const body = await req.json();
+      if (!body.phone) return new Response(JSON.stringify({ error: "Campo 'phone' é obrigatório" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const cleanPhone = body.phone.replace(/\D/g, "");
+      const upsertData: Record<string, any> = {
+        phone: cleanPhone,
+        last_interaction_at: new Date().toISOString(),
+      };
+      if (body.last_intent !== undefined) upsertData.last_intent = body.last_intent;
+      if (body.open_order_id !== undefined) upsertData.open_order_id = body.open_order_id || null;
+      if (body.open_subscription_id !== undefined) upsertData.open_subscription_id = body.open_subscription_id || null;
+      if (body.abandoned_cart !== undefined) upsertData.abandoned_cart = body.abandoned_cart;
+
+      const { data, error } = await supabase
+        .from("conversation_context")
+        .upsert(upsertData, { onConflict: "phone" })
+        .select()
+        .single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, data }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    default:
+      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+}
+
+// ============================================
+// AUDIT LOGS HANDLER (leitura de system_audit_logs)
+// GET /api/audit-logs?entity_type=order&status=error&limit=50
+// ============================================
+async function handleAuditLogs(req: Request, url: URL) {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const entity_type = url.searchParams.get("entity_type");
+  const entity_id = url.searchParams.get("entity_id");
+  const status = url.searchParams.get("status");
+  const limit = parseInt(url.searchParams.get("limit") || "100");
+
+  let query = supabase.from("system_audit_logs").select("*").order("created_at", { ascending: false }).limit(limit);
+  if (entity_type) query = query.eq("entity_type", entity_type);
+  if (entity_id) query = query.eq("entity_id", entity_id);
+  if (status) query = query.eq("status", status);
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return new Response(JSON.stringify({ success: true, count: data?.length || 0, data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+

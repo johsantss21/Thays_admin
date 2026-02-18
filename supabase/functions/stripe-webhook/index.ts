@@ -10,7 +10,56 @@ const logStep = (step: string, details?: any) => {
   console.log(`[STRIPE-WEBHOOK] ${step}${details ? ` - ${JSON.stringify(details)}` : ''}`);
 };
 
-// Utility: Calculate delivery date for ORDERS based on settings
+// =============================================
+// AUDIT HELPER — grava em system_audit_logs
+// =============================================
+async function auditLog(event_type: string, entity_type: string, entity_id: string | null, payload: any, status: 'success' | 'warning' | 'error' = 'success') {
+  try {
+    await supabase.from('system_audit_logs').insert({
+      event_type,
+      entity_type,
+      entity_id,
+      payload_json: payload,
+      status,
+    });
+  } catch (e) {
+    console.error('[AUDIT] Failed to write audit log:', e);
+  }
+}
+
+// =============================================
+// IDEMPOTÊNCIA
+// =============================================
+async function isAlreadyProcessed(event_id: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('webhook_events')
+    .select('id')
+    .eq('event_id', event_id)
+    .eq('provider', 'stripe')
+    .maybeSingle();
+  return !!data;
+}
+
+async function markAsProcessed(event_id: string) {
+  await supabase.from('webhook_events').insert({ event_id, provider: 'stripe' }).onConflict('event_id, provider').ignore();
+}
+
+// =============================================
+// REMOVER ENTREGAS FUTURAS (ao pausar por falha)
+// =============================================
+async function removeFutureDeliveries(subscriptionId: string) {
+  const today = new Date().toISOString().split('T')[0];
+  await supabase
+    .from('subscription_deliveries')
+    .delete()
+    .eq('subscription_id', subscriptionId)
+    .eq('delivery_status', 'aguardando')
+    .gte('delivery_date', today);
+}
+
+// =============================================
+// CÁLCULO DE DATA DE ENTREGA
+// =============================================
 async function calculateDeliveryDate(): Promise<{ delivery_date: string; delivery_time_slot: string }> {
   const now = new Date();
   const { data: settingsData } = await supabase.from("system_settings").select("*");
@@ -51,7 +100,6 @@ async function calculateDeliveryDate(): Promise<{ delivery_date: string; deliver
   return { delivery_date: deliveryDate.toISOString().split('T')[0], delivery_time_slot: timeSlot };
 }
 
-// Calculate next delivery date for SUBSCRIPTIONS based on chosen weekday(s)
 function calculateNextSubscriptionDelivery(deliveryWeekday: string, deliveryWeekdays: string[] | null): string {
   const weekdayMap: Record<string, number> = {
     domingo: 0, segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6,
@@ -99,6 +147,15 @@ serve(async (req) => {
 
     logStep("Event received", { type: event.type, id: event.id });
 
+    // ── IDEMPOTÊNCIA ──
+    if (await isAlreadyProcessed(event.id)) {
+      logStep("Event already processed, skipping", { eventId: event.id });
+      return new Response(JSON.stringify({ received: true, skipped: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     switch (event.type) {
       // ===== CHECKOUT COMPLETED (orders one-time + subscriptions first payment) =====
       case "checkout.session.completed": {
@@ -107,7 +164,6 @@ serve(async (req) => {
         logStep("Checkout completed", { metadata, mode: session.mode, amount: session.amount_total });
 
         if (metadata.type === 'order' && metadata.order_id) {
-          // ORDER: one-time payment confirmed
           const delivery = await calculateDeliveryDate();
           const { error } = await supabase.from('orders').update({
             payment_status: 'confirmado',
@@ -117,12 +173,16 @@ serve(async (req) => {
             delivery_time_slot: delivery.delivery_time_slot,
           }).eq('id', metadata.order_id);
 
-          if (error) logStep("Error updating order", { error: error.message });
-          else logStep("Order payment confirmed", { orderId: metadata.order_id, delivery });
+          if (error) {
+            await auditLog('stripe_order_update_erro', 'order', metadata.order_id, { error: error.message, sessionId: session.id }, 'error');
+            logStep("Error updating order", { error: error.message });
+          } else {
+            await auditLog('stripe_order_confirmado', 'order', metadata.order_id, { sessionId: session.id, delivery }, 'success');
+            logStep("Order payment confirmed", { orderId: metadata.order_id, delivery });
+          }
         }
 
         if (metadata.type === 'subscription' && metadata.subscription_id) {
-          // SUBSCRIPTION: Stripe subscription created via checkout
           const { data: sub } = await supabase.from('subscriptions')
             .select('delivery_weekday, delivery_weekdays')
             .eq('id', metadata.subscription_id)
@@ -132,7 +192,6 @@ serve(async (req) => {
             ? calculateNextSubscriptionDelivery(sub.delivery_weekday, sub.delivery_weekdays)
             : null;
 
-          // Save the actual Stripe subscription ID (from the checkout session)
           const stripeSubscriptionId = session.subscription as string || session.id;
 
           const { error } = await supabase.from('subscriptions').update({
@@ -141,8 +200,13 @@ serve(async (req) => {
             next_delivery_date: nextDelivery,
           }).eq('id', metadata.subscription_id);
 
-          if (error) logStep("Error updating subscription", { error: error.message });
-          else logStep("Subscription activated after Stripe checkout", { subscriptionId: metadata.subscription_id, stripeSubscriptionId, nextDelivery });
+          if (error) {
+            await auditLog('stripe_sub_ativacao_erro', 'subscription', metadata.subscription_id, { error: error.message }, 'error');
+            logStep("Error updating subscription", { error: error.message });
+          } else {
+            await auditLog('stripe_sub_ativada', 'subscription', metadata.subscription_id, { stripeSubscriptionId, nextDelivery }, 'success');
+            logStep("Subscription activated after Stripe checkout", { subscriptionId: metadata.subscription_id, stripeSubscriptionId, nextDelivery });
+          }
         }
         break;
       }
@@ -155,7 +219,6 @@ serve(async (req) => {
         if (stripeSubscriptionId) {
           logStep("Invoice paid for subscription", { subscriptionId: stripeSubscriptionId, amount: invoice.amount_paid });
 
-          // Find our subscription by stripe_subscription_id
           const { data: subs } = await supabase.from('subscriptions')
             .select('id, delivery_weekday, delivery_weekdays, status')
             .eq('stripe_subscription_id', stripeSubscriptionId)
@@ -165,14 +228,15 @@ serve(async (req) => {
             const sub = subs[0];
             const nextDelivery = calculateNextSubscriptionDelivery(sub.delivery_weekday, sub.delivery_weekdays);
 
-            // Ensure subscription is active and schedule next delivery
             await supabase.from('subscriptions').update({
               status: 'ativa',
               next_delivery_date: nextDelivery,
             }).eq('id', sub.id);
 
+            await auditLog('stripe_invoice_paga', 'subscription', sub.id, { stripeSubscriptionId, amount: invoice.amount_paid, nextDelivery }, 'success');
             logStep("Subscription renewed via invoice.paid", { subscriptionId: sub.id, nextDelivery });
           } else {
+            await auditLog('stripe_invoice_sub_nao_encontrada', 'webhook', null, { stripeSubscriptionId }, 'warning');
             logStep("No subscription found for stripe_subscription_id", { stripeSubscriptionId });
           }
         }
@@ -193,15 +257,12 @@ serve(async (req) => {
             .limit(1);
 
           if (subs && subs.length > 0) {
-            // Pause the subscription on payment failure
-            await supabase.from('subscriptions').update({
-              status: 'pausada',
-            }).eq('id', subs[0].id);
-
+            await supabase.from('subscriptions').update({ status: 'pausada' }).eq('id', subs[0].id);
+            await removeFutureDeliveries(subs[0].id);
+            await auditLog('stripe_invoice_falha_sub_pausada', 'subscription', subs[0].id, { stripeSubscriptionId }, 'error');
             logStep("Subscription paused due to payment failure", { subscriptionId: subs[0].id });
           }
         } else {
-          // Fallback: check if it's a one-time payment intent failure
           const paymentIntent = invoice.payment_intent as string;
           if (paymentIntent) {
             const { data: orders } = await supabase.from('orders')
@@ -210,9 +271,8 @@ serve(async (req) => {
               .limit(1);
 
             if (orders && orders.length > 0) {
-              await supabase.from('orders').update({
-                payment_status: 'recusado',
-              }).eq('id', orders[0].id);
+              await supabase.from('orders').update({ payment_status: 'recusado' }).eq('id', orders[0].id);
+              await auditLog('stripe_order_pagamento_recusado', 'order', orders[0].id, { paymentIntent }, 'error');
               logStep("Order payment failed", { orderId: orders[0].id });
             }
           }
@@ -231,9 +291,8 @@ serve(async (req) => {
           .limit(1);
 
         if (orders && orders.length > 0) {
-          await supabase.from('orders').update({
-            payment_status: 'recusado',
-          }).eq('id', orders[0].id);
+          await supabase.from('orders').update({ payment_status: 'recusado' }).eq('id', orders[0].id);
+          await auditLog('stripe_payment_intent_falhou', 'order', orders[0].id, { paymentIntentId: paymentIntent.id }, 'error');
           logStep("Order payment failed", { orderId: orders[0].id });
         }
         break;
@@ -250,10 +309,8 @@ serve(async (req) => {
           .limit(1);
 
         if (subs && subs.length > 0) {
-          await supabase.from('subscriptions').update({
-            status: 'cancelada',
-          }).eq('id', subs[0].id);
-
+          await supabase.from('subscriptions').update({ status: 'cancelada' }).eq('id', subs[0].id);
+          await auditLog('stripe_sub_cancelada', 'subscription', subs[0].id, { stripeSubId: subscription.id }, 'success');
           logStep("Subscription cancelled via Stripe", { subscriptionId: subs[0].id });
         }
         break;
@@ -263,12 +320,16 @@ serve(async (req) => {
         logStep("Unhandled event type", { type: event.type });
     }
 
+    // Marcar como processado após tratar o evento
+    await markAsProcessed(event.id);
+
     return new Response(JSON.stringify({ received: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (error: any) {
     logStep("ERROR", { message: error?.message });
+    await auditLog('stripe_webhook_erro', 'webhook', null, { error: error?.message }, 'error').catch(() => {});
     return new Response(JSON.stringify({ error: error?.message || "Erro interno" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },

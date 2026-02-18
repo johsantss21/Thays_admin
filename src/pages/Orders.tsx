@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Eye, Search, Calendar, Truck, CreditCard } from 'lucide-react';
+import { Plus, Eye, Search, Calendar, Truck, CreditCard, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { AdminLayout } from '@/components/layout/AdminLayout';
 import { OrderDialog } from '@/components/orders/OrderDialog';
 import { OrderDetailsDialog } from '@/components/orders/OrderDetailsDialog';
 import { supabase } from '@/integrations/supabase/client';
+import { OrderPrintReport } from '@/components/orders/OrderPrintReport';
 import { Order, PaymentStatus, DeliveryStatus } from '@/types/database';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -112,10 +113,14 @@ export default function Orders() {
             <h1 className="text-3xl font-bold">Pedidos</h1>
             <p className="text-muted-foreground mt-1">Gerencie os pedidos avulsos</p>
           </div>
-          <Button onClick={() => { setSelectedOrder(null); setDialogOpen(true); }}>
-            <Plus className="h-4 w-4 mr-2" />
-            Novo Pedido
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <OrderPrintReport />
+            <Button onClick={() => { setSelectedOrder(null); setDialogOpen(true); }}>
+              <Plus className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Novo Pedido</span>
+              <span className="sm:hidden">Novo</span>
+            </Button>
+          </div>
         </div>
 
         <Card>

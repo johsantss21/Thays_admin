@@ -6,6 +6,7 @@ import { AdminLayout } from '@/components/layout/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { DeliveriesTab } from '@/components/deliveries/DeliveriesTab';
 import { DashboardKPIs } from '@/components/dashboard/DashboardKPIs';
+import { FinancialDashboard } from '@/components/dashboard/FinancialDashboard';
 
 interface DashboardStats {
   totalProducts: number;
@@ -101,37 +102,47 @@ export default function Dashboard() {
     <AdminLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">Visão geral do sistema</p>
+          <h1 className="text-2xl sm:text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Visão geral do sistema</p>
         </div>
 
-        <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-            <TabsTrigger value="kpis" className="gap-1.5">
+        <Tabs defaultValue="financeiro" className="space-y-6">
+          <TabsList className="flex flex-wrap h-auto gap-1">
+            <TabsTrigger value="financeiro" className="gap-1.5 text-xs sm:text-sm">
               <TrendingUp className="h-4 w-4" />
+              <span className="hidden sm:inline">Financeiro</span>
+              <span className="sm:hidden">Finan.</span>
+            </TabsTrigger>
+            <TabsTrigger value="overview" className="text-xs sm:text-sm">
+              Visão Geral
+            </TabsTrigger>
+            <TabsTrigger value="kpis" className="gap-1.5 text-xs sm:text-sm">
               Indicadores
             </TabsTrigger>
-            <TabsTrigger value="deliveries" className="gap-1.5">
+            <TabsTrigger value="deliveries" className="gap-1.5 text-xs sm:text-sm">
               <Truck className="h-4 w-4" />
               Entregas
             </TabsTrigger>
           </TabsList>
 
+          <TabsContent value="financeiro">
+            <FinancialDashboard />
+          </TabsContent>
+
           <TabsContent value="overview" className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
               {statCards.map((card) => {
                 const Icon = card.icon;
                 return (
                   <Card key={card.title}>
-                    <CardContent className="pt-6">
+                    <CardContent className="pt-4 sm:pt-6 pb-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-sm font-medium text-muted-foreground">{card.title}</p>
-                          <p className="text-3xl font-bold mt-2">{card.value}</p>
+                          <p className="text-xs sm:text-sm font-medium text-muted-foreground">{card.title}</p>
+                          <p className="text-2xl sm:text-3xl font-bold mt-1 sm:mt-2">{card.value}</p>
                         </div>
-                        <div className={`p-3 rounded-full ${card.bgColor}`}>
-                          <Icon className={`h-6 w-6 ${card.color}`} />
+                        <div className={`p-2 sm:p-3 rounded-full ${card.bgColor}`}>
+                          <Icon className={`h-5 w-5 sm:h-6 sm:w-6 ${card.color}`} />
                         </div>
                       </div>
                     </CardContent>
@@ -140,20 +151,20 @@ export default function Dashboard() {
               })}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-6">
               {alertCards.map((card) => {
                 const Icon = card.icon;
                 return (
                   <Card key={card.title}>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-lg flex items-center gap-2">
+                      <CardTitle className="text-base flex items-center gap-2">
                         <Icon className="h-5 w-5 text-muted-foreground" />
                         {card.title}
                       </CardTitle>
-                      <CardDescription>{card.description}</CardDescription>
+                      <CardDescription className="text-xs">{card.description}</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-4xl font-bold text-primary">{card.value}</p>
+                      <p className="text-3xl sm:text-4xl font-bold text-primary">{card.value}</p>
                     </CardContent>
                   </Card>
                 );

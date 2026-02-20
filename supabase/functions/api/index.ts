@@ -111,6 +111,25 @@ serve(async (req) => {
       return handleMcp(req, mcpRoute, mcpSubRoute);
     }
 
+    // Admin routes: /api/admin/validate, /api/admin/permissions, /api/admin/confirm, /api/admin/execute, /api/admin/users
+    if (resource === "admin") {
+      const adminRoute = pathParts[2] || "";
+      return handleAdmin(req, url, adminRoute);
+    }
+
+    // Payments routes: /api/payments/create, /api/payments/check, /api/payments/test-pix
+    if (resource === "payments") {
+      const paymentsRoute = pathParts[2] || "";
+      return handlePayments(req, url, paymentsRoute);
+    }
+
+    // V2 routes: /api/v2/users, /api/v2/users/create-in-company
+    if (resource === "v2") {
+      const v2Resource = pathParts[2] || "";
+      const v2Action = pathParts[3] || "";
+      return handleV2(req, url, v2Resource, v2Action);
+    }
+
     switch (resource) {
       case "products":
         return handleProducts(req, url);
@@ -132,6 +151,8 @@ serve(async (req) => {
         return handleConversationContext(req, url);
       case "audit-logs":
         return handleAuditLogs(req, url);
+      case "validate-document":
+        return handleValidateDocument(req, url);
       default:
         return new Response(
           JSON.stringify({ 
@@ -147,10 +168,24 @@ serve(async (req) => {
               "/api/financial-summary?start=YYYY-MM-DD&end=YYYY-MM-DD",
               "/api/conversation-context?phone=55...",
               "/api/audit-logs?entity_type=order&status=error",
+              "/api/validate-document?type=cnpj&value=...",
+              "/api/validate-document?type=cep&value=...",
+              "/api/payments/create",
+              "/api/payments/check",
+              "/api/payments/test-pix",
+              "/api/admin/validate?phone=55...",
+              "/api/admin/permissions?phone=55...",
+              "/api/admin/confirm",
+              "/api/admin/execute",
+              "/api/admin/users",
               "/api/mcp/health",
               "/api/mcp/tools",
               "/api/mcp/call",
-              "/api/mcp/events/publish"
+              "/api/mcp/events/publish",
+              "POST /api/v2/users/create-in-company",
+              "GET /api/v2/users",
+              "PUT /api/v2/users/:id",
+              "DELETE /api/v2/users/:id"
             ]
           }),
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -367,7 +402,7 @@ async function handleCustomers(req: Request, url: URL) {
     case "GET": {
       let query = supabase.from("customers").select("*");
       if (id) query = query.eq("id", id);
-      if (phone) query = query.eq("phone", phone.replace(/\D/g, ""));
+      if (phone) query = query.in("phone", phoneVariants(phone));
       if (cpf_cnpj) query = query.eq("cpf_cnpj", cpf_cnpj.replace(/\D/g, ""));
       const { data, error } = await query.order("name");
       if (error) throw error;
@@ -1257,7 +1292,7 @@ async function handleConversationContext(req: Request, url: URL) {
       const { data, error } = await supabase
         .from("conversation_context")
         .select("*")
-        .eq("phone", phone.replace(/\D/g, ""))
+        .in("phone", phoneVariants(phone))
         .maybeSingle();
       if (error) throw error;
       return new Response(JSON.stringify({ success: true, data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1316,3 +1351,811 @@ async function handleAuditLogs(req: Request, url: URL) {
   return new Response(JSON.stringify({ success: true, count: data?.length || 0, data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+// ============================================
+// ADMIN HANDLER — /api/admin/*
+// ============================================
+function normalizePhone(phone: string): string {
+  return phone.replace(/\D/g, "");
+}
+
+function phoneVariants(phone: string): string[] {
+  const digitsOnly = normalizePhone(phone);
+  return [...new Set([digitsOnly, `+${digitsOnly}`, phone.trim()])];
+}
+
+async function getAdminByPhone(phone: string) {
+  const digitsOnly = normalizePhone(phone);
+  // Try multiple formats: digits only, with +, with + prefix
+  const variants = [digitsOnly, `+${digitsOnly}`, phone.trim()];
+  const uniqueVariants = [...new Set(variants)];
+
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("id, user_id, name, email, phone, status, role_id, roles:role_id(id, name, description)")
+    .in("phone", uniqueVariants)
+    .limit(1);
+  if (error) throw error;
+  return data && data.length > 0 ? data[0] : null;
+}
+
+async function getPermissionsForRole(roleId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("role_permissions")
+    .select("permissions:permission_id(resource, action)")
+    .eq("role_id", roleId);
+  if (error) throw error;
+  return (data || []).map((rp: any) => `${rp.permissions.resource}.${rp.permissions.action}`);
+}
+
+async function handleAdmin(req: Request, url: URL, route: string) {
+  const json = (data: any, status = 200) =>
+    new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  switch (route) {
+    // ── GET /api/admin/validate?phone=... ──
+    case "validate": {
+      if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+      const phone = url.searchParams.get("phone");
+      if (!phone) return json({ error: "Query param 'phone' é obrigatório" }, 400);
+
+      const user = await getAdminByPhone(phone);
+      if (!user) return json({ success: true, user_exists: false });
+
+      const roleName = (user.roles as any)?.name || "unknown";
+      let permissions: string[] = [];
+
+      if (user.role_id) {
+        permissions = await getPermissionsForRole(user.role_id);
+      }
+
+      // Check for user-level overrides
+      const { data: overrides } = await supabase
+        .from("user_permission_overrides")
+        .select("effect, permissions:permission_id(resource, action)")
+        .eq("user_id", user.id);
+
+      const denied = new Set<string>();
+      const allowed = new Set<string>();
+      (overrides || []).forEach((o: any) => {
+        const perm = `${o.permissions.resource}.${o.permissions.action}`;
+        if (o.effect === "deny") denied.add(perm);
+        else if (o.effect === "allow") allowed.add(perm);
+      });
+
+      // Apply overrides: remove denied, add allowed
+      const effectivePerms = permissions.filter(p => !denied.has(p));
+      allowed.forEach(p => { if (!effectivePerms.includes(p)) effectivePerms.push(p); });
+
+      // If role is super_admin or admin with all perms, use wildcard
+      const isFullAdmin = roleName.toLowerCase().includes("admin") && effectivePerms.length > 20;
+
+      return json({
+        success: true,
+        user_exists: true,
+        user_id: user.user_id,
+        app_user_id: user.id,
+        name: user.name,
+        role: roleName,
+        permissions: isFullAdmin ? ["*"] : effectivePerms,
+        status: user.status,
+      });
+    }
+
+    // ── GET /api/admin/permissions?phone=... ──
+    case "permissions": {
+      if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+      const phone = url.searchParams.get("phone");
+      if (!phone) return json({ error: "Query param 'phone' é obrigatório" }, 400);
+
+      const user = await getAdminByPhone(phone);
+      if (!user) return json({ success: false, error: "Usuário não encontrado" }, 404);
+
+      const roleName = (user.roles as any)?.name || "unknown";
+      let permissions: string[] = [];
+      if (user.role_id) {
+        permissions = await getPermissionsForRole(user.role_id);
+      }
+
+      return json({ success: true, role: roleName, permissions });
+    }
+
+    // ── POST /api/admin/confirm ──
+    case "confirm": {
+      if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+      const body = await req.json();
+      const { admin_phone, command_type, target_id } = body;
+
+      if (!admin_phone || !command_type) {
+        return json({ error: "Campos 'admin_phone' e 'command_type' são obrigatórios" }, 400);
+      }
+
+      const user = await getAdminByPhone(admin_phone);
+      if (!user) return json({ error: "Admin não encontrado" }, 404);
+      if (user.status !== "ativo") return json({ error: "Usuário não está ativo" }, 403);
+
+      // Validate permission for the command
+      const permMap: Record<string, string> = {
+        cancel_order: "orders.cancel",
+        cancel_subscription: "subscriptions.cancel",
+        pause_subscription: "subscriptions.pause",
+        update_settings: "settings.edit",
+        revoke_token: "tokens.revoke",
+        suspend_user: "users.suspend",
+      };
+
+      const requiredPerm = permMap[command_type];
+      if (requiredPerm && user.role_id) {
+        const perms = await getPermissionsForRole(user.role_id);
+        const roleName = (user.roles as any)?.name || "";
+        const isAdmin = roleName.toLowerCase().includes("admin");
+        if (!isAdmin && !perms.includes(requiredPerm)) {
+          return json({ error: `Permissão '${requiredPerm}' não encontrada para este usuário` }, 403);
+        }
+      }
+
+      const { data, error } = await supabase
+        .from("admin_confirmations")
+        .insert({
+          admin_phone: normalizePhone(admin_phone),
+          command_type,
+          target_id: target_id || null,
+          user_id: user.user_id,
+          status: "pending",
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      console.log(`Admin confirmation created: ${data.id} by ${user.name} for ${command_type}`);
+      return json({ success: true, confirmation_id: data.id, status: "pending" }, 201);
+    }
+
+    // ── POST /api/admin/execute ──
+    case "execute": {
+      if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+      const body = await req.json();
+      const { admin_phone, command, target_id } = body;
+
+      if (!admin_phone || !command) {
+        return json({ error: "Campos 'admin_phone' e 'command' são obrigatórios" }, 400);
+      }
+
+      const user = await getAdminByPhone(admin_phone);
+      if (!user) return json({ error: "Admin não encontrado" }, 404);
+      if (user.status !== "ativo") return json({ error: "Usuário não está ativo" }, 403);
+
+      // Check for pending confirmation
+      const { data: confirmation } = await supabase
+        .from("admin_confirmations")
+        .select("*")
+        .eq("admin_phone", normalizePhone(admin_phone))
+        .eq("command_type", command)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!confirmation) {
+        return json({ error: "Nenhuma confirmação pendente encontrada para este comando" }, 400);
+      }
+
+      // Execute the action
+      let result: any = null;
+      let executionStatus = "success";
+      let errorMessage: string | null = null;
+
+      try {
+        switch (command) {
+          case "cancel_order": {
+            if (!target_id) throw new Error("target_id (order id ou order_number) é obrigatório");
+            const isUuid = target_id.match(/^[0-9a-f-]{36}$/i);
+            let query = supabase.from("orders").update({
+              payment_status: "cancelado", delivery_status: "cancelado",
+              cancelled_at: new Date().toISOString(), cancelled_by: user.user_id,
+              cancellation_reason: body.reason || "Cancelado via admin API",
+            });
+            if (isUuid) query = query.eq("id", target_id);
+            else query = query.eq("order_number", target_id);
+            const { data: order, error: orderErr } = await query.select().single();
+            if (orderErr) throw orderErr;
+            result = order;
+            break;
+          }
+          case "cancel_subscription": {
+            if (!target_id) throw new Error("target_id é obrigatório");
+            const { data: sub, error: subErr } = await supabase
+              .from("subscriptions").update({ status: "cancelada" })
+              .eq("id", target_id).select().single();
+            if (subErr) throw subErr;
+            result = sub;
+            break;
+          }
+          case "pause_subscription": {
+            if (!target_id) throw new Error("target_id é obrigatório");
+            const { data: sub, error: subErr } = await supabase
+              .from("subscriptions").update({ status: "pausada" })
+              .eq("id", target_id).select().single();
+            if (subErr) throw subErr;
+            result = sub;
+            break;
+          }
+          default:
+            throw new Error(`Comando '${command}' não suportado para execução automática`);
+        }
+      } catch (e: any) {
+        executionStatus = "error";
+        errorMessage = e.message;
+      }
+
+      // Update confirmation
+      await supabase.from("admin_confirmations").update({
+        confirmation_received: true,
+        confirmed_at: new Date().toISOString(),
+        executed_at: new Date().toISOString(),
+        execution_status: executionStatus,
+        status: executionStatus === "success" ? "executed" : "failed",
+      }).eq("id", confirmation.id);
+
+      // Register in audit_logs
+      await supabase.from("audit_logs").insert({
+        actor_type: "user",
+        actor_id: user.user_id,
+        action: command.toUpperCase(),
+        resource_type: command.includes("order") ? "orders" : command.includes("subscription") ? "subscriptions" : "system",
+        resource_id: target_id || null,
+        after_data: result,
+        justification: body.reason || `Executado via admin API por ${user.name}`,
+        metadata: { confirmation_id: confirmation.id, admin_phone: normalizePhone(admin_phone) },
+      });
+
+      if (executionStatus === "error") {
+        return json({ success: false, error: errorMessage, confirmation_id: confirmation.id }, 500);
+      }
+
+      console.log(`Admin action executed: ${command} on ${target_id} by ${user.name}`);
+      return json({ success: true, command, target_id, result, confirmation_id: confirmation.id });
+    }
+
+    // ── GET /api/admin/users ──
+    case "users": {
+      if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+      const { data, error } = await supabase
+        .from("app_users")
+        .select("id, user_id, name, phone, email, status, roles:role_id(name)")
+        .order("name");
+      if (error) throw error;
+
+      const users = (data || []).map((u: any) => ({
+        id: u.id,
+        user_id: u.user_id,
+        name: u.name,
+        phone: u.phone,
+        email: u.email,
+        role: (u.roles as any)?.name || "sem_role",
+        status: u.status,
+      }));
+
+      return json({ success: true, count: users.length, data: users });
+    }
+
+    default:
+      return json({
+        error: "Admin route not found",
+        available_routes: [
+          "GET /api/admin/validate?phone=...",
+          "GET /api/admin/permissions?phone=...",
+          "POST /api/admin/confirm",
+          "POST /api/admin/execute",
+          "GET /api/admin/users",
+        ],
+      }, 404);
+  }
+}
+
+// ============================================
+// VALIDATE DOCUMENT HANDLER — /api/validate-document
+// GET /api/validate-document?type=cnpj&value=12345678000199
+// GET /api/validate-document?type=cep&value=64000000
+// ============================================
+async function handleValidateDocument(req: Request, url: URL) {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const type = url.searchParams.get("type");
+  const value = url.searchParams.get("value");
+
+  if (!type || !value) {
+    return new Response(JSON.stringify({ error: "Parâmetros 'type' e 'value' são obrigatórios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const cleanValue = value.replace(/\D/g, "");
+  let apiUrl: string;
+
+  switch (type) {
+    case "cnpj":
+      if (cleanValue.length !== 14) return new Response(JSON.stringify({ error: "CNPJ deve ter 14 dígitos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      apiUrl = `https://brasilapi.com.br/api/cnpj/v1/${cleanValue}`;
+      break;
+    case "cep":
+      if (cleanValue.length !== 8) return new Response(JSON.stringify({ error: "CEP deve ter 8 dígitos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      apiUrl = `https://brasilapi.com.br/api/cep/v2/${cleanValue}`;
+      break;
+    default:
+      return new Response(JSON.stringify({ error: "Tipo inválido. Use 'cnpj' ou 'cep'" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const response = await fetch(apiUrl, { headers: { "Accept": "application/json", "User-Agent": "Comercial-JR-API/1.0" } });
+  const data = await response.json();
+
+  if (!response.ok) {
+    return new Response(JSON.stringify({ error: data.message || `Erro ao consultar ${type.toUpperCase()}`, details: data }), { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  let formattedData: any;
+  if (type === "cnpj") {
+    formattedData = {
+      cnpj: data.cnpj, razao_social: data.razao_social, nome_fantasia: data.nome_fantasia,
+      situacao_cadastral: data.descricao_situacao_cadastral, logradouro: data.logradouro,
+      numero: data.numero, complemento: data.complemento, bairro: data.bairro,
+      municipio: data.municipio, uf: data.uf, cep: data.cep, telefone: data.ddd_telefone_1,
+      email: data.email, porte: data.porte, qsa: data.qsa, raw: data,
+    };
+  } else {
+    formattedData = { cep: data.cep, logradouro: data.street, bairro: data.neighborhood, cidade: data.city, estado: data.state, raw: data };
+  }
+
+  return new Response(JSON.stringify({ success: true, data: formattedData }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ============================================
+// PAYMENTS HANDLER — /api/payments/*
+// ============================================
+async function handlePayments(req: Request, url: URL, route: string) {
+  const json = (data: any, status = 200) =>
+    new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  switch (route) {
+    // ── POST /api/payments/create ──
+    case "create": {
+      if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+      const body = await req.json();
+      const { type, order_id, subscription_id, payment_method, return_url } = body;
+
+      if (!payment_method || !['cartao', 'pix'].includes(payment_method)) {
+        return json({ error: "payment_method deve ser 'cartao' ou 'pix'" }, 400);
+      }
+      if (!type || !['order', 'subscription'].includes(type)) {
+        return json({ error: "type deve ser 'order' ou 'subscription'" }, 400);
+      }
+
+      // Proxy to create-payment edge function
+      const createPaymentUrl = `${SUPABASE_URL}/functions/v1/create-payment`;
+      const resp = await fetch(createPaymentUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+        body: JSON.stringify({ type, order_id, subscription_id, payment_method, return_url }),
+      });
+      const result = await resp.json();
+      return json(result, resp.status);
+    }
+
+    // ── POST /api/payments/check ──
+    case "check": {
+      if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+      const body = await req.json();
+      const { type, order_id, subscription_id } = body;
+
+      if (!type || !['order', 'subscription'].includes(type)) {
+        return json({ error: "type deve ser 'order' ou 'subscription'" }, 400);
+      }
+
+      // Proxy to check-pix-payment edge function
+      const checkUrl = `${SUPABASE_URL}/functions/v1/check-pix-payment`;
+      const resp = await fetch(checkUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+        body: JSON.stringify({ type, order_id, subscription_id }),
+      });
+      const result = await resp.json();
+      return json(result, resp.status);
+    }
+
+    // ── POST /api/payments/test-pix ──
+    case "test-pix": {
+      if (req.method !== "POST" && req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+      // Proxy to test-pix-connection edge function
+      const testUrl = `${SUPABASE_URL}/functions/v1/test-pix-connection`;
+      const resp = await fetch(testUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+        body: JSON.stringify({}),
+      });
+      const result = await resp.json();
+      return json(result, resp.status);
+    }
+
+    default:
+      return json({
+        error: "Payments route not found",
+        available_routes: [
+          "POST /api/payments/create — Criar pagamento (Pix ou Stripe)",
+          "POST /api/payments/check — Verificar status de pagamento",
+          "POST /api/payments/test-pix — Testar conexão mTLS com Efí Pay",
+        ],
+      }, 404);
+  }
+}
+
+// ============================================
+// V2 HANDLER — /api/v2/users/*
+// Sistema SINGLE-TENANT: todos os usuários compartilham
+// os mesmos dados (customers, orders, subscriptions).
+// Diferenciação ocorre APENAS por nivel_acesso e permissoes.
+// ============================================
+async function handleV2(req: Request, url: URL, v2Resource: string, v2Action: string) {
+  const json = (data: any, status = 200) =>
+    new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  // ── GET /api/v2/debug/session ──
+  if (v2Resource === "debug" && v2Action === "session") {
+    if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+    // Extract user from Authorization header if present
+    const authHeader = req.headers.get("authorization");
+    let sessionInfo: any = { sistema: "single-tenant", message: "Use Authorization Bearer token para ver dados da sessão" };
+
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.replace("Bearer ", "");
+      const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+      const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: { user } } = await userClient.auth.getUser();
+
+      if (user) {
+        const { data: appUser } = await supabase
+          .from("app_users")
+          .select("id, name, email, username, cargo, departamento, tipo_vinculo, status")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        const { data: userRoles } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id);
+
+        const roles = (userRoles || []).map((r: any) => r.role);
+        const nivelAcesso = roles.includes("admin") ? "admin" : roles.includes("moderator") ? "moderator" : "user";
+
+        sessionInfo = {
+          sistema: "single-tenant",
+          user_id: user.id,
+          email: user.email,
+          nivel_acesso: nivelAcesso,
+          roles,
+          is_owner: roles.includes("admin"),
+          app_user: appUser,
+        };
+      }
+    }
+
+    return json(sessionInfo);
+  }
+
+  // ── GET /api/v2/me ──
+  if (v2Resource === "me" && !v2Action) {
+    if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return json({ error: "Token de autenticação necessário" }, 401);
+    }
+
+    const token = authHeader.replace("Bearer ", "");
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: { user }, error: userError } = await userClient.auth.getUser();
+
+    if (userError || !user) return json({ error: "Token inválido ou expirado" }, 401);
+
+    const { data: appUser } = await supabase
+      .from("app_users")
+      .select("*")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const { data: userRoles } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id);
+
+    const roles = (userRoles || []).map((r: any) => r.role);
+    const nivelAcesso = roles.includes("admin") ? "admin" : roles.includes("moderator") ? "moderator" : "user";
+
+    return json({
+      success: true,
+      sistema: "single-tenant",
+      user_id: user.id,
+      email: user.email,
+      nivel_acesso: nivelAcesso,
+      is_owner: roles.includes("admin"),
+      roles,
+      profile: appUser ? {
+        name: appUser.name,
+        username: appUser.username,
+        cargo: appUser.cargo,
+        departamento: appUser.departamento,
+        tipo_vinculo: appUser.tipo_vinculo,
+        status: appUser.status,
+        phone: appUser.phone,
+      } : null,
+    });
+  }
+
+  if (v2Resource !== "users") {
+    return json({ error: "V2 resource not found. Available: users, me, debug/session" }, 404);
+  }
+
+  // ── POST /api/v2/users/create-in-company ──
+  // Cria usuário vinculado ao sistema existente (single-tenant)
+  if (v2Action === "create-in-company") {
+    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+    const body = await req.json();
+    const { dados_usuario, nivel_acesso, permissoes } = body;
+
+    if (!dados_usuario?.email || !dados_usuario?.password) {
+      return json({ error: "dados_usuario.email e dados_usuario.password são obrigatórios" }, 400);
+    }
+    if (!dados_usuario?.name) {
+      return json({ error: "dados_usuario.name é obrigatório" }, 400);
+    }
+
+    // Mapeamento de nivel_acesso para app_role
+    const nivelMap: Record<string, string> = {
+      admin: "admin",
+      moderador: "moderator",
+      moderator: "moderator",
+      financeiro: "user",
+      rh: "user",
+      vendas: "user",
+      operacional: "user",
+      user: "user",
+    };
+    const appRole = nivelMap[nivel_acesso?.toLowerCase()] || "user";
+
+    // 1. Criar auth user no Supabase
+    const { data: newAuthUser, error: authError } = await supabase.auth.admin.createUser({
+      email: dados_usuario.email.trim(),
+      password: dados_usuario.password,
+      email_confirm: true,
+    });
+
+    if (authError) {
+      console.error("Auth user creation error:", authError);
+      return json({ error: authError.message }, 400);
+    }
+
+    const authUserId = newAuthUser.user.id;
+
+    // 2. Buscar role_id correspondente se nivel_acesso for um role customizado
+    let roleId: string | null = null;
+    if (nivel_acesso && !["admin", "moderator", "moderador", "user"].includes(nivel_acesso?.toLowerCase())) {
+      const { data: roleData } = await supabase
+        .from("roles")
+        .select("id")
+        .ilike("name", nivel_acesso)
+        .maybeSingle();
+      roleId = roleData?.id || null;
+    }
+
+    // 3. Inserir em app_users — MESMO sistema, sem isolamento
+    const appUserPayload: Record<string, any> = {
+      user_id: authUserId,
+      email: dados_usuario.email.trim(),
+      name: dados_usuario.name,
+      username: dados_usuario.username || null,
+      phone: dados_usuario.phone || null,
+      cargo: dados_usuario.cargo || nivel_acesso || null,
+      departamento: dados_usuario.departamento || null,
+      tipo_vinculo: dados_usuario.tipo_vinculo || null,
+      status: "ativo",
+      tentativas_login: 0,
+      auth_provider: "email",
+      must_change_password: dados_usuario.must_change_password !== false,
+      ...(roleId ? { role_id: roleId } : {}),
+      // Campos adicionais opcionais
+      cpf: dados_usuario.cpf || null,
+      rg: dados_usuario.rg || null,
+      celular: dados_usuario.celular || null,
+      data_nascimento: dados_usuario.data_nascimento || null,
+      data_admissao: dados_usuario.data_admissao || null,
+      salario_base: dados_usuario.salario_base || null,
+      centro_custo: dados_usuario.centro_custo || null,
+      notes: dados_usuario.notes || null,
+    };
+
+    const { data: appUser, error: appUserError } = await supabase
+      .from("app_users")
+      .insert(appUserPayload)
+      .select()
+      .single();
+
+    if (appUserError) {
+      console.error("app_users insert error:", appUserError);
+      await supabase.auth.admin.deleteUser(authUserId);
+      return json({ error: appUserError.message }, 400);
+    }
+
+    // 4. Atribuir role na tabela user_roles (separada — sem escalada de privilégio)
+    await supabase.from("user_roles").insert({
+      user_id: authUserId,
+      role: appRole as any,
+    });
+
+    // 5. Log de auditoria
+    await supabase.from("system_audit_logs").insert({
+      event_type: "USER_CREATED_VIA_API",
+      entity_type: "user",
+      entity_id: authUserId,
+      status: "success",
+      payload_json: {
+        source: "n8n_api_v2",
+        email: dados_usuario.email.trim(),
+        nivel_acesso: nivel_acesso || "user",
+        app_role: appRole,
+      },
+    });
+
+    console.log(`User created via API v2: ${dados_usuario.email} — nivel: ${nivel_acesso}`);
+
+    return json({
+      success: true,
+      message: "Usuário criado e vinculado ao sistema existente",
+      sistema: "single-tenant",
+      user: {
+        id: authUserId,
+        app_user_id: appUser.id,
+        email: appUser.email,
+        name: appUser.name,
+        nivel_acesso: nivel_acesso || "user",
+        app_role: appRole,
+        status: appUser.status,
+        cargo: appUser.cargo,
+        departamento: appUser.departamento,
+      },
+    }, 201);
+  }
+
+  // ── GET /api/v2/users ──
+  if (!v2Action && req.method === "GET") {
+    const status = url.searchParams.get("status");
+    const role = url.searchParams.get("role");
+
+    let query = supabase
+      .from("app_users")
+      .select(`
+        id, user_id, name, email, username, phone, cargo, departamento,
+        tipo_vinculo, status, created_at, last_login_at,
+        roles:role_id(name, description)
+      `);
+
+    if (status) query = query.eq("status", status);
+
+    const { data, error } = await query.order("name");
+    if (error) throw error;
+
+    // Enriquecer com roles da tabela user_roles
+    const userIds = (data || []).map((u: any) => u.user_id);
+    const { data: userRolesData } = await supabase
+      .from("user_roles")
+      .select("user_id, role")
+      .in("user_id", userIds);
+
+    const rolesMap = new Map<string, string[]>();
+    for (const ur of userRolesData || []) {
+      if (!rolesMap.has(ur.user_id)) rolesMap.set(ur.user_id, []);
+      rolesMap.get(ur.user_id)!.push(ur.role);
+    }
+
+    const users = (data || [])
+      .map((u: any) => ({
+        id: u.user_id,
+        app_user_id: u.id,
+        name: u.name,
+        email: u.email,
+        username: u.username,
+        phone: u.phone,
+        cargo: u.cargo,
+        departamento: u.departamento,
+        tipo_vinculo: u.tipo_vinculo,
+        status: u.status,
+        created_at: u.created_at,
+        last_login_at: u.last_login_at,
+        role_name: (u.roles as any)?.name || null,
+        app_roles: rolesMap.get(u.user_id) || [],
+        nivel_acesso: (rolesMap.get(u.user_id) || []).includes("admin")
+          ? "admin"
+          : (rolesMap.get(u.user_id) || []).includes("moderator")
+          ? "moderator"
+          : u.cargo || "user",
+      }))
+      .filter((u: any) => !role || u.app_roles.includes(role));
+
+    return json({ success: true, sistema: "single-tenant", count: users.length, data: users });
+  }
+
+  // ── PUT /api/v2/users/:id ── (update user status/role)
+  if (!v2Action && req.method === "PUT") {
+    const userId = url.searchParams.get("id");
+    if (!userId) return json({ error: "Parâmetro 'id' (user_id) é obrigatório" }, 400);
+
+    const body = await req.json();
+    const updateData: Record<string, any> = {};
+    if (body.status !== undefined) updateData.status = body.status;
+    if (body.cargo !== undefined) updateData.cargo = body.cargo;
+    if (body.departamento !== undefined) updateData.departamento = body.departamento;
+    if (body.notes !== undefined) updateData.notes = body.notes;
+    if (body.phone !== undefined) updateData.phone = body.phone;
+
+    const { data, error } = await supabase
+      .from("app_users")
+      .update(updateData)
+      .eq("user_id", userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Se mudar role
+    if (body.app_role) {
+      await supabase.from("user_roles").delete().eq("user_id", userId);
+      await supabase.from("user_roles").insert({ user_id: userId, role: body.app_role });
+    }
+
+    return json({ success: true, data });
+  }
+
+  // ── DELETE /api/v2/users/:id ── (suspend user)
+  if (!v2Action && req.method === "DELETE") {
+    const userId = url.searchParams.get("id");
+    if (!userId) return json({ error: "Parâmetro 'id' (user_id) é obrigatório" }, 400);
+
+    // Suspender (não deletar) para preservar histórico
+    const { data, error } = await supabase
+      .from("app_users")
+      .update({ status: "suspenso" })
+      .eq("user_id", userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    await supabase.from("system_audit_logs").insert({
+      event_type: "USER_SUSPENDED_VIA_API",
+      entity_type: "user",
+      entity_id: userId,
+      status: "success",
+      payload_json: { source: "n8n_api_v2" },
+    });
+
+    return json({ success: true, message: "Usuário suspenso (dados preservados)", data });
+  }
+
+  return json({
+    error: "V2 Users route not found",
+    available_routes: [
+      "POST /api/v2/users/create-in-company — Criar usuário no sistema existente",
+      "GET /api/v2/users — Listar todos os usuários",
+      "GET /api/v2/users?status=ativo — Filtrar por status",
+      "GET /api/v2/users?role=admin — Filtrar por role",
+      "PUT /api/v2/users?id=<user_id> — Atualizar usuário",
+      "DELETE /api/v2/users?id=<user_id> — Suspender usuário",
+    ],
+  }, 404);
+}

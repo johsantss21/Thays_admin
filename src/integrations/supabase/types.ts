@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_confirmations: {
+        Row: {
+          admin_phone: string
+          command_type: string
+          confirmation_received: boolean | null
+          confirmed_at: string | null
+          created_at: string | null
+          executed_at: string | null
+          execution_status: string | null
+          id: string
+          status: string | null
+          target_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          admin_phone: string
+          command_type: string
+          confirmation_received?: boolean | null
+          confirmed_at?: string | null
+          created_at?: string | null
+          executed_at?: string | null
+          execution_status?: string | null
+          id?: string
+          status?: string | null
+          target_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          admin_phone?: string
+          command_type?: string
+          confirmation_received?: boolean | null
+          confirmed_at?: string | null
+          created_at?: string | null
+          executed_at?: string | null
+          execution_status?: string | null
+          id?: string
+          status?: string | null
+          target_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       admin_profiles: {
         Row: {
           active: boolean
@@ -111,52 +153,214 @@ export type Database = {
       }
       app_users: {
         Row: {
+          agencia: string | null
+          auth_provider: string | null
+          bairro: string | null
+          banco: string | null
+          capital_integralizado: number | null
+          cargo: string | null
+          cbo: string | null
+          celular: string | null
+          centro_custo: string | null
+          cep: string | null
+          cidade: string | null
+          cnh: string | null
+          complemento: string | null
+          comprovante_residencia_url: string | null
+          conta: string | null
+          contrato_social_url: string | null
+          contrato_trabalho_url: string | null
+          cpf: string | null
+          cpf_url: string | null
           created_at: string
+          data_admissao: string | null
+          data_emissao_rg: string | null
+          data_entrada_sociedade: string | null
+          data_inicio_efetivo: string | null
+          data_nascimento: string | null
+          departamento: string | null
           email: string
+          email_corporativo: string | null
+          estado: string | null
+          estado_civil: string | null
           failed_login_attempts: number
+          forma_pagamento: string | null
           id: string
+          jornada: string | null
           last_login_at: string | null
           locked_until: string | null
+          logradouro: string | null
+          matricula_interna: string | null
           must_change_password: boolean
+          nacionalidade: string | null
           name: string
+          naturalidade: string | null
+          nome_mae: string | null
+          nome_pai: string | null
+          nome_social: string | null
           notes: string | null
+          numero: string | null
+          orgao_emissor: string | null
+          pais: string | null
+          percentual_participacao: number | null
           phone: string | null
+          pis_pasep_nit: string | null
+          pro_labore: number | null
+          rg: string | null
+          rg_url: string | null
           role_id: string | null
+          salario_base: number | null
+          sexo: string | null
           status: string
+          tentativas_login: number | null
+          tipo_conta: string | null
+          tipo_contrato: string | null
+          tipo_socio: string | null
+          tipo_vinculo: string | null
+          titulo_eleitor: string | null
           updated_at: string
           user_id: string
+          username: string | null
         }
         Insert: {
+          agencia?: string | null
+          auth_provider?: string | null
+          bairro?: string | null
+          banco?: string | null
+          capital_integralizado?: number | null
+          cargo?: string | null
+          cbo?: string | null
+          celular?: string | null
+          centro_custo?: string | null
+          cep?: string | null
+          cidade?: string | null
+          cnh?: string | null
+          complemento?: string | null
+          comprovante_residencia_url?: string | null
+          conta?: string | null
+          contrato_social_url?: string | null
+          contrato_trabalho_url?: string | null
+          cpf?: string | null
+          cpf_url?: string | null
           created_at?: string
+          data_admissao?: string | null
+          data_emissao_rg?: string | null
+          data_entrada_sociedade?: string | null
+          data_inicio_efetivo?: string | null
+          data_nascimento?: string | null
+          departamento?: string | null
           email: string
+          email_corporativo?: string | null
+          estado?: string | null
+          estado_civil?: string | null
           failed_login_attempts?: number
+          forma_pagamento?: string | null
           id?: string
+          jornada?: string | null
           last_login_at?: string | null
           locked_until?: string | null
+          logradouro?: string | null
+          matricula_interna?: string | null
           must_change_password?: boolean
+          nacionalidade?: string | null
           name: string
+          naturalidade?: string | null
+          nome_mae?: string | null
+          nome_pai?: string | null
+          nome_social?: string | null
           notes?: string | null
+          numero?: string | null
+          orgao_emissor?: string | null
+          pais?: string | null
+          percentual_participacao?: number | null
           phone?: string | null
+          pis_pasep_nit?: string | null
+          pro_labore?: number | null
+          rg?: string | null
+          rg_url?: string | null
           role_id?: string | null
+          salario_base?: number | null
+          sexo?: string | null
           status?: string
+          tentativas_login?: number | null
+          tipo_conta?: string | null
+          tipo_contrato?: string | null
+          tipo_socio?: string | null
+          tipo_vinculo?: string | null
+          titulo_eleitor?: string | null
           updated_at?: string
           user_id: string
+          username?: string | null
         }
         Update: {
+          agencia?: string | null
+          auth_provider?: string | null
+          bairro?: string | null
+          banco?: string | null
+          capital_integralizado?: number | null
+          cargo?: string | null
+          cbo?: string | null
+          celular?: string | null
+          centro_custo?: string | null
+          cep?: string | null
+          cidade?: string | null
+          cnh?: string | null
+          complemento?: string | null
+          comprovante_residencia_url?: string | null
+          conta?: string | null
+          contrato_social_url?: string | null
+          contrato_trabalho_url?: string | null
+          cpf?: string | null
+          cpf_url?: string | null
           created_at?: string
+          data_admissao?: string | null
+          data_emissao_rg?: string | null
+          data_entrada_sociedade?: string | null
+          data_inicio_efetivo?: string | null
+          data_nascimento?: string | null
+          departamento?: string | null
           email?: string
+          email_corporativo?: string | null
+          estado?: string | null
+          estado_civil?: string | null
           failed_login_attempts?: number
+          forma_pagamento?: string | null
           id?: string
+          jornada?: string | null
           last_login_at?: string | null
           locked_until?: string | null
+          logradouro?: string | null
+          matricula_interna?: string | null
           must_change_password?: boolean
+          nacionalidade?: string | null
           name?: string
+          naturalidade?: string | null
+          nome_mae?: string | null
+          nome_pai?: string | null
+          nome_social?: string | null
           notes?: string | null
+          numero?: string | null
+          orgao_emissor?: string | null
+          pais?: string | null
+          percentual_participacao?: number | null
           phone?: string | null
+          pis_pasep_nit?: string | null
+          pro_labore?: number | null
+          rg?: string | null
+          rg_url?: string | null
           role_id?: string | null
+          salario_base?: number | null
+          sexo?: string | null
           status?: string
+          tentativas_login?: number | null
+          tipo_conta?: string | null
+          tipo_contrato?: string | null
+          tipo_socio?: string | null
+          tipo_vinculo?: string | null
+          titulo_eleitor?: string | null
           updated_at?: string
           user_id?: string
+          username?: string | null
         }
         Relationships: [
           {
@@ -1006,6 +1210,44 @@ export type Database = {
           value?: Json
         }
         Relationships: []
+      }
+      user_audit_logs: {
+        Row: {
+          changed_at: string
+          changed_by: string
+          field_name: string
+          id: string
+          new_value: string | null
+          old_value: string | null
+          user_id: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by: string
+          field_name: string
+          id?: string
+          new_value?: string | null
+          old_value?: string | null
+          user_id: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string
+          field_name?: string
+          id?: string
+          new_value?: string | null
+          old_value?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_audit_logs_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_permission_overrides: {
         Row: {

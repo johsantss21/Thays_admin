@@ -26,3 +26,9 @@ verify_jwt = false
 
 [functions.mcp-hub]
 verify_jwt = false
+
+[functions.auth-login]
+verify_jwt = false
+
+[functions.admin-create-user]
+verify_jwt = false

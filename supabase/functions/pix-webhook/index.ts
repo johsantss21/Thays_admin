@@ -40,7 +40,7 @@ async function isAlreadyProcessed(event_id: string, provider: 'efi' | 'stripe'):
 }
 
 async function markAsProcessed(event_id: string, provider: 'efi' | 'stripe') {
-  await supabase.from('webhook_events').insert({ event_id, provider }).onConflict('event_id, provider').ignore();
+  await supabase.from('webhook_events').upsert({ event_id, provider }, { onConflict: 'event_id' });
 }
 
 // =============================================

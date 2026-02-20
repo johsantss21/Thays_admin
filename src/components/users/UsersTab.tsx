@@ -3,14 +3,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Plus, Search, UserCog, ShieldAlert, ShieldCheck, KeyRound, MoreVertical } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { UserCompleteDialog } from './UserCompleteDialog';
 
 interface AppUser {
   id: string;
@@ -25,6 +25,7 @@ interface AppUser {
   notes: string | null;
   created_at: string;
   roles?: { name: string } | null;
+  [key: string]: any;
 }
 
 interface Role {
@@ -44,13 +45,6 @@ export function UsersTab() {
   const [justification, setJustification] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Form state
-  const [formName, setFormName] = useState('');
-  const [formEmail, setFormEmail] = useState('');
-  const [formPhone, setFormPhone] = useState('');
-  const [formRoleId, setFormRoleId] = useState('');
-  const [formNotes, setFormNotes] = useState('');
-
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
@@ -68,51 +62,12 @@ export function UsersTab() {
 
   const openCreate = () => {
     setEditingUser(null);
-    setFormName(''); setFormEmail(''); setFormPhone(''); setFormRoleId(''); setFormNotes('');
     setDialogOpen(true);
   };
 
   const openEdit = (u: AppUser) => {
     setEditingUser(u);
-    setFormName(u.name); setFormEmail(u.email); setFormPhone(u.phone || '');
-    setFormRoleId(u.role_id || ''); setFormNotes(u.notes || '');
     setDialogOpen(true);
-  };
-
-  const handleSave = async () => {
-    if (!formName.trim() || !formEmail.trim()) {
-      toast({ variant: 'destructive', title: 'Erro', description: 'Nome e email são obrigatórios.' });
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editingUser) {
-        const { error } = await supabase.from('app_users').update({
-          name: formName.trim(),
-          email: formEmail.trim(),
-          phone: formPhone.trim() || null,
-          role_id: formRoleId || null,
-          notes: formNotes.trim() || null,
-        }).eq('id', editingUser.id);
-        if (error) throw error;
-        toast({ title: 'Usuário atualizado' });
-      } else {
-        const { error } = await supabase.from('app_users').insert({
-          user_id: crypto.randomUUID(), // placeholder, will be linked on first login
-          name: formName.trim(),
-          email: formEmail.trim(),
-          phone: formPhone.trim() || null,
-          role_id: formRoleId || null,
-          notes: formNotes.trim() || null,
-        });
-        if (error) throw error;
-        toast({ title: 'Usuário criado' });
-      }
-      setDialogOpen(false);
-      fetchData();
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Erro', description: err.message });
-    } finally { setSaving(false); }
   };
 
   const handleSensitiveAction = async () => {
@@ -132,7 +87,6 @@ export function UsersTab() {
       const { error } = await supabase.from('app_users').update(updateData).eq('id', userId);
       if (error) throw error;
 
-      // Log audit
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('audit_logs').insert({
         actor_type: 'user',
@@ -192,6 +146,8 @@ export function UsersTab() {
                     <p className="text-sm text-muted-foreground truncate">{u.email}</p>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <Badge variant="outline" className="text-xs">{(u.roles as any)?.name || 'Sem perfil'}</Badge>
+                      {u.cargo && <Badge variant="outline" className="text-xs">{u.cargo}</Badge>}
+                      {u.tipo_vinculo && <Badge variant="outline" className="text-xs">{u.tipo_vinculo.toUpperCase()}</Badge>}
                       {u.last_login_at && (
                         <span className="text-xs text-muted-foreground">
                           Último login: {new Date(u.last_login_at).toLocaleDateString('pt-BR')}
@@ -230,34 +186,14 @@ export function UsersTab() {
         </div>
       )}
 
-      {/* Create/Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editingUser ? 'Editar Usuário' : 'Novo Usuário'}</DialogTitle>
-            <DialogDescription>Preencha os dados do usuário operador.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div><Label>Nome *</Label><Input value={formName} onChange={e => setFormName(e.target.value)} /></div>
-            <div><Label>Email *</Label><Input type="email" value={formEmail} onChange={e => setFormEmail(e.target.value)} /></div>
-            <div><Label>Telefone</Label><Input value={formPhone} onChange={e => setFormPhone(e.target.value)} /></div>
-            <div>
-              <Label>Perfil</Label>
-              <Select value={formRoleId} onValueChange={setFormRoleId}>
-                <SelectTrigger><SelectValue placeholder="Selecione um perfil" /></SelectTrigger>
-                <SelectContent>
-                  {roles.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div><Label>Observações</Label><Textarea value={formNotes} onChange={e => setFormNotes(e.target.value)} rows={2} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Salvar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Complete User Dialog */}
+      <UserCompleteDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editingUser={editingUser}
+        roles={roles}
+        onSaved={fetchData}
+      />
 
       {/* Justification Dialog */}
       <Dialog open={!!justificationDialog} onOpenChange={() => setJustificationDialog(null)}>

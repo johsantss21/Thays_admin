@@ -41,7 +41,7 @@ async function isAlreadyProcessed(event_id: string): Promise<boolean> {
 }
 
 async function markAsProcessed(event_id: string) {
-  await supabase.from('webhook_events').insert({ event_id, provider: 'stripe' }).onConflict('event_id, provider').ignore();
+  await supabase.from('webhook_events').upsert({ event_id, provider: 'stripe' }, { onConflict: 'event_id' });
 }
 
 // =============================================

@@ -10,10 +10,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 
 const loginSchema = z.object({
-  email: z.string().email('E-mail inválido'),
-  password: z.string().min(6, 'Senha deve ter pelo menos 6 caracteres'),
+  login: z.string().min(1, 'Informe seu email ou username'),
+  password: z.string().min(1, 'Informe sua senha'),
 });
 
 type LoginFormData = z.infer<typeof loginSchema>;
@@ -27,7 +28,7 @@ export default function Login() {
   const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: '',
+      login: '',
       password: '',
     },
   });
@@ -35,17 +36,50 @@ export default function Login() {
   const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
     try {
-      const { error } = await signIn(data.email, data.password);
-      
-      if (error) {
-        toast({
-          variant: 'destructive',
-          title: 'Erro no login',
-          description: error.message === 'Invalid login credentials'
-            ? 'E-mail ou senha incorretos'
-            : error.message,
+      const isEmail = data.login.includes('@');
+
+      if (isEmail) {
+        // Existing email + password flow via Supabase Auth directly
+        const { error } = await signIn(data.login.trim(), data.password);
+        if (error) {
+          toast({
+            variant: 'destructive',
+            title: 'Erro no login',
+            description: error.message === 'Invalid login credentials'
+              ? 'E-mail ou senha incorretos'
+              : error.message,
+          });
+          return;
+        }
+      } else {
+        // Username login: call the auth-login edge function
+        const { data: fnData, error: fnError } = await supabase.functions.invoke('auth-login', {
+          body: { login: data.login.trim(), senha: data.password },
         });
-        return;
+
+        if (fnError || !fnData?.token) {
+          toast({
+            variant: 'destructive',
+            title: 'Erro no login',
+            description: fnData?.error || 'Username ou senha incorretos',
+          });
+          return;
+        }
+
+        // Set the session using the returned token
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: fnData.token,
+          refresh_token: fnData.refresh_token,
+        });
+
+        if (sessionError) {
+          toast({
+            variant: 'destructive',
+            title: 'Erro ao iniciar sessão',
+            description: sessionError.message,
+          });
+          return;
+        }
       }
 
       toast({
@@ -73,7 +107,7 @@ export default function Login() {
           </div>
           <CardTitle className="text-2xl">Hidroponia Admin</CardTitle>
           <CardDescription>
-            Faça login para acessar o painel administrativo
+            Faça login com seu email ou username
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -81,14 +115,15 @@ export default function Login() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
-                name="email"
+                name="login"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>E-mail</FormLabel>
+                    <FormLabel>Email ou Username</FormLabel>
                     <FormControl>
                       <Input
-                        type="email"
-                        placeholder="seu@email.com"
+                        type="text"
+                        placeholder="seu@email.com ou username"
+                        autoComplete="username"
                         {...field}
                       />
                     </FormControl>
@@ -106,6 +141,7 @@ export default function Login() {
                       <Input
                         type="password"
                         placeholder="••••••••"
+                        autoComplete="current-password"
                         {...field}
                       />
                     </FormControl>

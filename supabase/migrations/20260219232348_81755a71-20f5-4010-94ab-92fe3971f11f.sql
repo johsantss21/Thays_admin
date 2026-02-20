@@ -1,0 +1,1 @@
+UPDATE app_users SET tentativas_login = 0 WHERE username = 'Joelson_Santos';
